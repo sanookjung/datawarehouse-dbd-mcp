@@ -1,0 +1,26 @@
+{
+  "name": "datawarehouse-dbd-mcp",
+  "version": "0.1.0",
+  "description": "MCP server สำหรับ datawarehouse.dbd.go.th (กรมพัฒนาธุรกิจการค้า) — Thai juristic-person & financial data.",
+  "type": "module",
+  "private": false,
+  "bin": {
+    "datawarehouse-dbd-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "playwright install chromium --with-deps || playwright install chromium"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "playwright": "^1.60.0",
+    "zod": "^4.4.3"
+  }
+}
