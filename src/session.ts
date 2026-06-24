@@ -123,17 +123,32 @@ async function bootstrap(): Promise<SessionState> {
 
     if (!cookiesWarm) throw new Error("Incapsula cookies not set after load attempts");
 
-    // Let the network settle briefly
+    // Let the network settle. Some networks (e.g. a freshly-challenged IP)
+    // need the Incapsula JS challenge to fully run before /api/refresh is
+    // accepted — domcontentloaded alone can be too early and yields a 403.
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => null);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => null);
 
     // Force a fresh idToken via /api/refresh from within the page so the
-    // Incapsula JS challenge has time to settle the cookie jar.
-    const refresh = await page.evaluate(async () => {
-      const r = await fetch("/api/refresh", { method: "POST", credentials: "include" });
-      return { status: r.status, body: await r.text() };
-    });
-    if (refresh.status !== 200) throw new Error(`bootstrap refresh failed: ${refresh.status}`);
-    const idToken: string = JSON.parse(refresh.body).idToken;
+    // Incapsula JS challenge has time to settle the cookie jar. Retry a few
+    // times IN-PAGE (no new browser launch, so the WAF isn't hit harder):
+    // the first call right after load can 403 while the challenge settles.
+    let idToken = "";
+    let lastStatus = 0;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const refresh = await page.evaluate(async () => {
+        const r = await fetch("/api/refresh", { method: "POST", credentials: "include" });
+        return { status: r.status, body: await r.text() };
+      });
+      lastStatus = refresh.status;
+      if (refresh.status === 200) {
+        idToken = JSON.parse(refresh.body).idToken;
+        break;
+      }
+      // Give the Incapsula challenge more time to settle before retrying.
+      await page.waitForTimeout(2500 * attempt);
+    }
+    if (!idToken) throw new Error(`bootstrap refresh failed: ${lastStatus}`);
 
     const cookies = await ctx.cookies();
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
