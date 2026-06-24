@@ -1,0 +1,71 @@
+{
+  "name": "DBD Profile Lookup",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dbd-profile",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "webhookId": "dbd-profile-lookup"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accept juristicId from JSON body, query string, or raw text.\nconst body = $json.body ?? {};\nconst query = $json.query ?? {};\nlet id = body.juristicId ?? query.juristicId ?? body.id ?? query.id ?? '';\nid = String(id).replace(/\\D/g, '');\nif (!/^\\d{13}$/.test(id)) {\n  throw new Error('juristicId must be exactly 13 digits. Got: ' + JSON.stringify(id));\n}\nreturn [{ json: { juristicId: id } }];"
+      },
+      "id": "validate-id",
+      "name": "Validate ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://192.168.50.44:8787/profile/{{ $json.juristicId }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "dbd-call",
+      "name": "DBD Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shape a compact, useful summary from the raw DBD payload.\nconst r = $json;\nif (!r.ok) {\n  return [{ json: { ok: false, error: r.error ?? 'lookup failed' } }];\n}\nconst d = r.data ?? {};\nreturn [{\n  json: {\n    ok: true,\n    juristicId: d.jpNo,\n    nameTH: d.jpName,\n    nameEN: d.jpNameE,\n    type: d.jpType?.jpTypeDesc,\n    status: d.jpStatus?.jpStatDesc,\n    statusEN: d.jpStatus?.jpStatDescE,\n    registeredCapital: d.capAmt,\n    businessSize: d.businessSizeCode,\n    province: d.locationProvince?.pvDesc,\n    district: d.locationAmpur?.ampurDesc,\n    address: d.address,\n    objectiveTH: d.submitObjType?.objDesc ?? d.setupObjType?.objDesc,\n    ageYears: d.jpAge,\n    raw: d\n  }\n}];"
+      },
+      "id": "shape-out",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1140, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate ID", "type": "main", "index": 0 }]] },
+    "Validate ID": { "main": [[{ "node": "DBD Lookup", "type": "main", "index": 0 }]] },
+    "DBD Lookup": { "main": [[{ "node": "Shape Result", "type": "main", "index": 0 }]] },
+    "Shape Result": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
