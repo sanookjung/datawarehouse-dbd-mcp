@@ -26,6 +26,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .eslintcache
 .cache
 *.tsbuildinfo
+.session-cache.json
+test_session.ts
+scratch/get_all_info.ts
 
 # IntelliJ based IDEs
 .idea

@@ -128,10 +128,10 @@ export const tools: Tool[] = [
   {
     name: "get_financial_submit_history",
     description:
-      "ดึงประวัติการนำส่งงบการเงิน.\n" + "Get the submission history of financial statements.",
+      "ดึงประวัติการนำส่งงบการเงิน. ต้องระบุปีงบประมาณ.\n" + "Get the submission history of financial statements. Requires fiscalYear.",
     inputSchema: z.object({
       juristicId: JuristicId,
-      fiscalYear: z.number().int().optional(),
+      fiscalYear: z.number().int().describe("ปีงบประมาณ ค.ศ. (เช่น 2024)"),
     }),
     handler: ({ juristicId, fiscalYear }) => api.financial.getSubmitHistory(juristicId, fiscalYear),
   },

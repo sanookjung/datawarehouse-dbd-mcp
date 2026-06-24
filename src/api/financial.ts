@@ -9,13 +9,15 @@ const BASE = "/api/v1/fin";
 /** งบการเงินรายการสำคัญ / Basic financial figures for a juristic person. */
 export function getBasics<T = unknown>(juristicId: string, fiscalYear?: number): Promise<T> {
   const [a, c] = splitJuristicId(juristicId);
-  return apiCall<T>(`${BASE}/basics/${a}/${c}`, { query: { fiscalYear } });
+  const yr = fiscalYear && fiscalYear < 2400 ? fiscalYear + 543 : fiscalYear;
+  return apiCall<T>(`${BASE}/basics/${a}/${c}`, { query: { fiscalYear: yr } });
 }
 
 /** ประวัติการนำส่งงบการเงิน / Submission history for the financial statement. */
-export function getSubmitHistory<T = unknown>(juristicId: string, fiscalYear?: number): Promise<T> {
+export function getSubmitHistory<T = unknown>(juristicId: string, fiscalYear: number): Promise<T> {
   const [a, c] = splitJuristicId(juristicId);
-  return apiCall<T>(`${BASE}/submit/${a}/${c}`, { query: { fiscalYear } });
+  const yr = fiscalYear < 2400 ? fiscalYear + 543 : fiscalYear;
+  return apiCall<T>(`${BASE}/submit/${a}/${c}`, { query: { fiscalYear: yr } });
 }
 
 /** กราฟแสดงผลรายการสำคัญ / Chart data for basic financial figures. */

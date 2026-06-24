@@ -9,11 +9,16 @@
  * refreshed via /api/refresh.
  */
 import { chromium, type Browser, type BrowserContext } from "playwright";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { join } from "path";
 import { decryptEnvelope, type Envelope } from "./crypto.ts";
 
 const BASE_URL = "https://datawarehouse.dbd.go.th";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+const CACHE_FILE = join(process.cwd(), ".session-cache.json");
+const BOOTSTRAP_COOLDOWN_MS = 60_000;
+let lastBootstrapFailureTime = 0;
 
 interface SessionState {
   cookieHeader: string;
@@ -23,6 +28,28 @@ interface SessionState {
 
 let state: SessionState | null = null;
 let bootstrapInflight: Promise<SessionState> | null = null;
+
+function loadCachedSession(): SessionState | null {
+  try {
+    if (existsSync(CACHE_FILE)) {
+      const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8"));
+      if (data && data.cookieHeader && data.idToken && data.tokenExp) {
+        return data;
+      }
+    }
+  } catch {
+    // Ignore read/parse errors
+  }
+  return null;
+}
+
+function saveCachedSession(s: SessionState) {
+  try {
+    writeFileSync(CACHE_FILE, JSON.stringify(s, null, 2), "utf-8");
+  } catch {
+    // Ignore write errors
+  }
+}
 
 function parseJwtExp(jwt: string): number {
   const part = jwt.split(".")[1] ?? "";
@@ -36,12 +63,22 @@ function parseJwtExp(jwt: string): number {
 }
 
 async function bootstrap(): Promise<SessionState> {
+  const now = Date.now();
+  if (now - lastBootstrapFailureTime < BOOTSTRAP_COOLDOWN_MS) {
+    const waitTime = BOOTSTRAP_COOLDOWN_MS - (now - lastBootstrapFailureTime);
+    console.warn(`[Session] Bootstrap on cooldown. Waiting ${Math.round(waitTime / 1000)}s to protect IP...`);
+    await new Promise((r) => setTimeout(r, waitTime));
+  }
+
   let browser: Browser | null = null;
   let ctx: BrowserContext | null = null;
   try {
     browser = await chromium.launch({
       headless: true,
-      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+      // --disable-http2: DBD's Incapsula edge rejects headless Chromium's HTTP/2
+      // handshake (ERR_HTTP2_PROTOCOL_ERROR). Forcing HTTP/1.1 lets the WAF JS
+      // challenge complete. (local fix, 2026-06)
+      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-http2"],
     });
     ctx = await browser.newContext({
       userAgent: UA,
@@ -57,8 +94,37 @@ async function bootstrap(): Promise<SessionState> {
       window.chrome = { runtime: {} };
     });
     const page = await ctx.newPage();
-    await page.goto(BASE_URL + "/", { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => null);
+
+    // Use a robust retry loop for the initial page load
+    const maxPageAttempts = 3;
+    let cookiesWarm = false;
+    for (let attempt = 1; attempt <= maxPageAttempts; attempt++) {
+      try {
+        // Use "commit" so we can check for Incapsula challenge cookies immediately
+        await page.goto(BASE_URL + "/", { waitUntil: "commit", timeout: 20_000 });
+        
+        // Poll for Incapsula session/visid cookies which indicate WAF challenge resolved
+        for (let i = 0; i < 30; i++) {
+          const currentCookies = await ctx.cookies();
+          const hasIncap = currentCookies.some(c => c.name.startsWith("incap_ses") || c.name.startsWith("visid_incap"));
+          if (hasIncap) {
+            cookiesWarm = true;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (cookiesWarm) break;
+        throw new Error("WAF Incapsula cookies did not appear in context");
+      } catch (err) {
+        if (attempt === maxPageAttempts) throw err;
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+
+    if (!cookiesWarm) throw new Error("Incapsula cookies not set after load attempts");
+
+    // Let the network settle briefly
+    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => null);
 
     // Force a fresh idToken via /api/refresh from within the page so the
     // Incapsula JS challenge has time to settle the cookie jar.
@@ -72,6 +138,9 @@ async function bootstrap(): Promise<SessionState> {
     const cookies = await ctx.cookies();
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     return { cookieHeader, idToken, tokenExp: parseJwtExp(idToken) };
+  } catch (err) {
+    lastBootstrapFailureTime = Date.now();
+    throw err;
   } finally {
     await ctx?.close().catch(() => null);
     await browser?.close().catch(() => null);
@@ -80,9 +149,17 @@ async function bootstrap(): Promise<SessionState> {
 
 async function ensureSession(): Promise<SessionState> {
   if (state && state.tokenExp - 60 > Date.now() / 1000) return state;
+
+  const cached = loadCachedSession();
+  if (cached && cached.tokenExp - 60 > Date.now() / 1000) {
+    state = cached;
+    return cached;
+  }
+
   if (bootstrapInflight) return bootstrapInflight;
   bootstrapInflight = bootstrap().then((s) => {
     state = s;
+    saveCachedSession(s);
     bootstrapInflight = null;
     return s;
   });
@@ -97,6 +174,9 @@ async function refreshToken(): Promise<void> {
   });
   if (r.status !== 200) {
     state = null;
+    try {
+      if (existsSync(CACHE_FILE)) unlinkSync(CACHE_FILE);
+    } catch {}
     return;
   }
   const setCookie = r.headers.get("set-cookie");
@@ -104,6 +184,7 @@ async function refreshToken(): Promise<void> {
   const body = (await r.json()) as { idToken: string };
   state.idToken = body.idToken;
   state.tokenExp = parseJwtExp(body.idToken);
+  saveCachedSession(state);
 }
 
 function mergeSetCookie(existing: string, setCookie: string): string {
@@ -179,6 +260,9 @@ async function doApi<T>(path: string, method: string, body: unknown, retry = tru
     if (!retry) throw new Error(`auth failed: ${res.status}`);
     // Re-bootstrap and try once more
     state = null;
+    try {
+      if (existsSync(CACHE_FILE)) unlinkSync(CACHE_FILE);
+    } catch {}
     return doApi<T>(path, method, body, false);
   }
   if (res.status >= 400) {
