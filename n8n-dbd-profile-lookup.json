@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "url": "=http://192.168.50.44:8787/profile/{{ $json.juristicId }}",
+        "url": "=http://192.168.50.199:8787/profile/{{ $json.juristicId }}",
         "options": {
           "timeout": 60000
         }
