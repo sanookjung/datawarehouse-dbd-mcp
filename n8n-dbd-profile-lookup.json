@@ -1,5 +1,7 @@
 {
+  "id": "dbdProfileLook01",
   "name": "DBD Profile Lookup",
+  "active": true,
   "nodes": [
     {
       "parameters": {
