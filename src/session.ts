@@ -15,7 +15,9 @@ import { decryptEnvelope, type Envelope } from "./crypto.ts";
 
 const BASE_URL = "https://datawarehouse.dbd.go.th";
 const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+  process.platform === "win32"
+    ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const CACHE_FILE = join(process.cwd(), ".session-cache.json");
 const BOOTSTRAP_COOLDOWN_MS = 60_000;
 let lastBootstrapFailureTime = 0;
